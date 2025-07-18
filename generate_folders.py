@@ -4,7 +4,7 @@
 直接生成 Stream Deck 文件夹结构，而不是 ZIP 文件
 """
 
-import json, uuid, pathlib, shutil, hashlib
+import json, uuid, pathlib, shutil, hashlib, os
 from typing import Dict, List
 
 # 常量
@@ -12,7 +12,17 @@ DEVICE_MODEL = "20GBA9901"
 DEVICE_UUID = "293V3"
 COLUMNS, ROWS = 5, 3
 OUTPUT_DIR = "StreamDeck_Profiles"  # 输出目录
-OFFICIAL_PROFILES_DIR = r"C:\Users\jiuai233\AppData\Roaming\HotSpot\StreamDock\profiles"
+
+# 自动获取用户目录下的 StreamDock profiles 路径
+def get_official_profiles_dir():
+    """获取官方 StreamDock profiles 目录"""
+    # 获取用户目录
+    user_profile = os.path.expanduser("~")
+    # 构建 StreamDock profiles 路径
+    profiles_path = os.path.join(user_profile, "AppData", "Roaming", "HotSpot", "StreamDock", "profiles")
+    return profiles_path
+
+OFFICIAL_PROFILES_DIR = get_official_profiles_dir()
 
 # UUID 存储文件
 UUID_FILE = "profile_uuids.json"
@@ -37,7 +47,7 @@ def mk_btn(img, name, uuid_key, settings=None, show_title=True):
     """创建按钮配置"""
     st = {"Image": img}
     if show_title:
-        st.update({"Title": name, "TitleAlignment": "bottom", "FontSize": "10"})
+        st.update({"Title": name, "TitleAlignment": "middle", "FontSize": 14, "FontStyle": "Bold"})
     return {
         "ActionID": uid(),
         "Controller": "",
@@ -95,7 +105,7 @@ def generate_model_profile_folder(model_data):
     model_name = model_data["modelName"]
     safe_name = safe_filename(model_name)
     
-    print(f"\n=== 生成 {model_name} profile 文件夹 ===")
+    print(f"\n=== Generating {model_name} profile folder ===")
     
     # 获取模型UUID
     model_uuid = get_model_uuid(model_name)
@@ -161,14 +171,21 @@ def generate_model_profile_folder(model_data):
         page_folder.mkdir(parents=True, exist_ok=True)
         page_ids.append(f"{page_uuid}.sdProfile")
         
+        # 为每个子页面创建Images文件夹并复制图标
+        page_images_dst = page_folder / "Images"
+        if images_src.exists():
+            shutil.copytree(images_src, page_images_dst)
+        else:
+            page_images_dst.mkdir()
+        
         # 页面动作
         acts = {}
         
         # 导航按钮
         if page_idx > 0:
-            acts[PREV_SLOT] = mk_btn(IMG_PREV, "上一页", "com.hotspot.streamdock.page.previous", show_title=False)
+            acts[PREV_SLOT] = mk_btn(IMG_PREV, "Previous", "com.hotspot.streamdock.page.previous", show_title=False)
         if page_idx < total_pages - 1:
-            acts[NEXT_SLOT] = mk_btn(IMG_NEXT, "下一页", "com.hotspot.streamdock.page.next", show_title=False)
+            acts[NEXT_SLOT] = mk_btn(IMG_NEXT, "Next", "com.hotspot.streamdock.page.next", show_title=False)
         
         # 可用槽位
         current_usable = [s for s in USABLE]
@@ -182,8 +199,9 @@ def generate_model_profile_folder(model_data):
         # 第一页添加切换模型按钮
         if page_idx == 0:
             switch_slot = next(hk_slots_iter)
+            model_icon = model_data.get("icon", IMG_SWITCH)
             acts[switch_slot] = mk_btn(
-                IMG_SWITCH, "切换模型",
+                model_icon, "Switch Model",
                 "com.mirabox.streamdock.VtubeStudio.action1",
                 {
                     "ip": "127.0.0.1", "port": "8001",
@@ -194,7 +212,7 @@ def generate_model_profile_folder(model_data):
             # 返回Home按钮
             home_slot = "0,2"
             acts[home_slot] = mk_btn(
-                IMG_SWITCH, "返回Home",
+                IMG_SWITCH, "Back to Home",
                 "com.hotspot.streamdock.profile.rotate",
                 {
                     "DeviceUUID": "",
@@ -207,8 +225,12 @@ def generate_model_profile_folder(model_data):
                 sl = next(hk_slots_iter)
                 if page_idx == 0 and sl == "0,2":  # 跳过被占用的位置
                     sl = next(hk_slots_iter)
+                
+                # 处理热键图标路径
+                hotkey_icon = model_data.get("icon", IMG_HOTKEY)
+                
                 acts[sl] = mk_btn(
-                    IMG_HOTKEY, hk["name"] or hk["type"],
+                    hotkey_icon, hk["name"] or hk["type"],
                     "com.mirabox.streamdock.VtubeStudio.action2",
                     {
                         "ip": "127.0.0.1", "port": "8001",
@@ -232,7 +254,7 @@ def generate_model_profile_folder(model_data):
         with open(page_folder / "manifest.json", 'w', encoding='utf-8') as f:
             json.dump(page_manifest, f, indent=2, ensure_ascii=False)
         
-        print(f"  · 页面 {page_idx+1}: {len(acts)} 个动作")
+        print(f"  Page {page_idx+1}: {len(acts)} actions")
     
     # 写根manifest
     root_manifest = {
@@ -251,12 +273,12 @@ def generate_model_profile_folder(model_data):
     with open(profile_folder / "manifest.json", 'w', encoding='utf-8') as f:
         json.dump(root_manifest, f, indent=2, ensure_ascii=False)
     
-    print(f"✅ 生成完成: {profile_folder}")
+    print(f"[OK] Generated: {profile_folder}")
     return profile_folder
 
-def generate_home_profile_folder(model_names):
+def generate_home_profile_folder(models_data):
     """生成Home profile文件夹"""
-    print(f"\n=== 生成 Home profile 文件夹 ===")
+    print(f"\n=== Generating Home profile folder ===")
     
     home_uuid = get_home_uuid()
     
@@ -283,27 +305,38 @@ def generate_home_profile_folder(model_names):
     home_page_folder = profiles_dir / f"{home_page_uuid}.sdProfile"
     home_page_folder.mkdir(parents=True, exist_ok=True)
     
+    # 为Home子页面创建Images文件夹
+    home_page_images_dst = home_page_folder / "Images"
+    if images_src.exists():
+        shutil.copytree(images_src, home_page_images_dst)
+    else:
+        home_page_images_dst.mkdir()
+    
     # Home页面动作
     home_acts = {}
     available_slots = [s for s in ALL_SLOTS if s not in {PREV_SLOT, NEXT_SLOT}]
     
     # 为每个模型创建跳转按钮
     button_count = 0
-    for model_name in model_names:
+    for model_data in models_data:
         if button_count >= len(available_slots):
             break
         
         slot_pos = available_slots[button_count]
-        model_uuid = get_model_uuid(model_name)
+        model_uuid = get_model_uuid(model_data["modelName"])
+        
+        # 处理Home页面的图标路径（Home子页面直接使用文件名）
+        home_icon = model_data.get("icon", IMG_SWITCH)
+            
         home_acts[slot_pos] = mk_btn(
-            IMG_SWITCH, model_name,
+            home_icon, model_data["modelName"],
             "com.hotspot.streamdock.profile.rotate",
             {
                 "DeviceUUID": "",
                 "ProfileUUID": model_uuid
             })
         button_count += 1
-        print(f"  添加模型按钮: {model_name} -> {model_uuid}")
+        print(f"  Added model button: {model_data['modelName']} -> {model_uuid}")
     
     # 写Home页面manifest
     home_page_manifest = {
@@ -334,8 +367,8 @@ def generate_home_profile_folder(model_names):
     with open(home_folder / "manifest.json", 'w', encoding='utf-8') as f:
         json.dump(home_root_manifest, f, indent=2, ensure_ascii=False)
     
-    print(f"✅ 生成完成: {home_folder}")
-    print(f"  包含 {len(home_acts)} 个模型跳转按钮")
+    print(f"[OK] Generated: {home_folder}")
+    print(f"  Contains {len(home_acts)} model switch buttons")
     return home_folder
 
 def copy_to_official_directory():
@@ -381,10 +414,9 @@ def main():
     try:
         with open("models_hotkeys.json", 'r', encoding='utf-8') as f:
             models_data = json.load(f)["models"]
-        model_names = [m["modelName"] for m in models_data]
-        print(f"找到 {len(model_names)} 个模型")
+        print(f"Found {len(models_data)} models")
     except Exception as e:
-        print(f"读取模型数据失败: {e}")
+        print(f"Failed to read model data: {e}")
         return
     
     # 生成所有模型的profile文件夹
@@ -392,17 +424,12 @@ def main():
         generate_model_profile_folder(model_data)
     
     # 生成Home profile文件夹
-    generate_home_profile_folder(model_names)
+    generate_home_profile_folder(models_data)
     
-    print(f"\n🎉 所有profile文件夹已生成到 {OUTPUT_DIR} 目录!")
+    print("\n[OK] All profile folders generated to {} directory!".format(OUTPUT_DIR))
     
-    # 询问是否复制到官方目录
-    choice = input("\n是否复制到官方 Stream Deck 目录? (y/n): ").strip().lower()
-    if choice == 'y':
-        copy_to_official_directory()
-    else:
-        print(f"\n请手动复制 {OUTPUT_DIR} 中的文件夹到:")
-        print(f"  {OFFICIAL_PROFILES_DIR}")
+    print("\nPlease manually copy folders from {} to:".format(OUTPUT_DIR))
+    print("  {}".format(OFFICIAL_PROFILES_DIR))
 
 if __name__ == "__main__":
     main()

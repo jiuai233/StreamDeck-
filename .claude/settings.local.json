@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(del test_icon_copy.py test_icon_copy_standalone.py update_json_icons.py)",
+      "Bash(pip install:*)"
+    ],
+    "deny": []
+  }
+}

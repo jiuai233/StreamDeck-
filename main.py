@@ -240,7 +240,7 @@ class VTSAPI:
                 await asyncio.sleep(DELAY_AFTER_LOAD)
                 return
             except RuntimeError as e:
-                if "Cannot currently change model" in str(e):
+                if "Cannot currently change model" in str(e) or "model load cooldown" in str(e):
                     if attempt < max_retries - 1:
                         print(f"  ⚠️ 模型切换失败，2秒后重试 ({attempt + 1}/{max_retries})")
                         await asyncio.sleep(2)
@@ -498,7 +498,7 @@ def generate_model_profile_folder(model_data):
             switch_slot = next(hk_slots_iter)
             model_icon = model_data.get("icon", IMG_SWITCH)
             acts[switch_slot] = mk_btn(
-                model_icon, "Switch Model",
+                model_icon, "切换模型",
                 "com.mirabox.streamdock.VtubeStudio.action1",
                 {
                     "ip": "127.0.0.1", "port": "8001",
@@ -573,9 +573,20 @@ def generate_model_profile_folder(model_data):
     print(f"[OK] Generated: {profile_folder}")
     return profile_folder
 
+def get_home_page_capacity(page_idx, total_pages):
+    """计算主页每页容量"""
+    if total_pages == 1:
+        return 15  # 单页可以使用所有15个按钮
+    elif page_idx == 0:
+        return 14  # 首页：14个按钮（无Previous按钮）
+    elif page_idx == total_pages - 1:
+        return 14  # 末页：14个按钮（无Next按钮）
+    else:
+        return 13  # 中间页：13个按钮（需要Previous和Next按钮）
+
 def generate_home_profile_folder(models_data):
-    """生成Home profile文件夹"""
-    print(f"\n=== Generating Home profile folder ===")
+    """生成Home profile文件夹（支持分页）"""
+    print(f"\n=== Generating Home profile folder with pagination ===")
     
     home_uuid = get_home_uuid()
     
@@ -597,55 +608,92 @@ def generate_home_profile_folder(models_data):
     profiles_dir = home_folder / "profiles"
     profiles_dir.mkdir(exist_ok=True)
     
-    # 生成Home页面
-    home_page_uuid = str(uuid.uuid4()).upper()
-    home_page_folder = profiles_dir / f"{home_page_uuid}.sdProfile"
-    home_page_folder.mkdir(parents=True, exist_ok=True)
+    # 计算分页
+    total_models = len(models_data)
+    rough_pages = max(1, (total_models + 12) // 13)  # 粗估页数
     
-    # 为Home子页面创建Images文件夹
-    home_page_images_dst = home_page_folder / "Images"
-    if images_src.exists():
-        shutil.copytree(images_src, home_page_images_dst)
+    # 分配模型到各页
+    model_chunks = []
+    remaining_models = models_data[:]
+    page_idx = 0
+    
+    if not remaining_models:
+        model_chunks.append([])
     else:
-        home_page_images_dst.mkdir()
+        while remaining_models:
+            capacity = get_home_page_capacity(page_idx, rough_pages)
+            chunk = remaining_models[:capacity]
+            remaining_models = remaining_models[capacity:]
+            model_chunks.append(chunk)
+            page_idx += 1
     
-    # Home页面动作
-    home_acts = {}
-    available_slots = [s for s in ALL_SLOTS if s not in {PREV_SLOT, NEXT_SLOT}]
+    total_pages = len(model_chunks)
+    page_uuids = []
     
-    # 为每个模型创建跳转按钮
-    button_count = 0
-    for model_data in models_data:
-        if button_count >= len(available_slots):
-            break
+    print(f"  总模型数: {total_models}, 分为 {total_pages} 页")
+    
+    # 生成每一页
+    for page_idx, model_chunk in enumerate(model_chunks):
+        page_uuid = str(uuid.uuid4()).upper()
+        page_uuids.append(f"{page_uuid}.sdProfile")
+        page_folder = profiles_dir / f"{page_uuid}.sdProfile"
+        page_folder.mkdir(parents=True, exist_ok=True)
         
-        slot_pos = available_slots[button_count]
-        model_uuid = get_model_uuid(model_data["modelName"])
+        # 为页面创建Images文件夹
+        page_images_dst = page_folder / "Images"
+        if images_src.exists():
+            shutil.copytree(images_src, page_images_dst)
+        else:
+            page_images_dst.mkdir()
         
-        # 处理Home页面的图标路径（Home子页面直接使用文件名）
-        home_icon = model_data.get("icon", IMG_SWITCH)
+        acts = {}
+        
+        # 添加导航按钮
+        if page_idx > 0:
+            acts[PREV_SLOT] = mk_btn(IMG_PREV, "Previous", "com.hotspot.streamdock.page.previous", show_title=False)
+        if page_idx < total_pages - 1:
+            acts[NEXT_SLOT] = mk_btn(IMG_NEXT, "Next", "com.hotspot.streamdock.page.next", show_title=False)
+        
+        # 计算可用槽位
+        current_usable = [s for s in USABLE]
+        if page_idx == 0:
+            current_usable = [PREV_SLOT] + current_usable  # 首页可以使用PREV_SLOT
+        if page_idx == total_pages - 1:
+            current_usable = current_usable + [NEXT_SLOT]  # 末页可以使用NEXT_SLOT
+        
+        # 为模型创建按钮
+        for i, model_data in enumerate(model_chunk):
+            if i >= len(current_usable):
+                break
             
-        home_acts[slot_pos] = mk_btn(
-            home_icon, model_data["modelName"],
-            "com.hotspot.streamdock.profile.rotate",
-            {
-                "DeviceUUID": "",
-                "ProfileUUID": model_uuid
-            })
-        button_count += 1
-        print(f"  Added model button: {model_data['modelName']} -> {model_uuid}")
-    
-    # 写Home页面manifest
-    home_page_manifest = {
-        "DeviceModel": DEVICE_MODEL,
-        "DeviceUUID": DEVICE_UUID,
-        "Name": "Home",
-        "Version": "1.0",
-        "Actions": home_acts
-    }
-    
-    with open(home_page_folder / "manifest.json", 'w', encoding='utf-8') as f:
-        json.dump(home_page_manifest, f, indent=2, ensure_ascii=False)
+            slot_pos = current_usable[i]
+            model_uuid = get_model_uuid(model_data["modelName"])
+            
+            # 处理图标路径
+            home_icon = model_data.get("icon", IMG_SWITCH)
+            
+            acts[slot_pos] = mk_btn(
+                home_icon, model_data["modelName"],
+                "com.hotspot.streamdock.profile.rotate",
+                {
+                    "DeviceUUID": "",
+                    "ProfileUUID": model_uuid
+                })
+            print(f"  页面 {page_idx + 1}: 添加模型按钮 {model_data['modelName']} -> {model_uuid}")
+        
+        # 写页面manifest
+        page_manifest = {
+            "DeviceModel": DEVICE_MODEL,
+            "DeviceUUID": DEVICE_UUID,
+            "Name": f"Home-{page_idx + 1}",
+            "Version": "1.0",
+            "Actions": acts
+        }
+        
+        with open(page_folder / "manifest.json", 'w', encoding='utf-8') as f:
+            json.dump(page_manifest, f, indent=2, ensure_ascii=False)
+        
+        print(f"  生成页面 {page_idx + 1}: {len(model_chunk)} 个模型")
     
     # 写Home根manifest
     home_root_manifest = {
@@ -655,8 +703,8 @@ def generate_home_profile_folder(models_data):
         "Version": "1.0",
         "Actions": {},
         "Pages": {
-            "Current": f"{home_page_uuid}.sdProfile",
-            "Pages": [f"{home_page_uuid}.sdProfile"]
+            "Current": page_uuids[0],
+            "Pages": page_uuids
         },
         "ProfileUUID": home_uuid
     }
@@ -665,7 +713,7 @@ def generate_home_profile_folder(models_data):
         json.dump(home_root_manifest, f, indent=2, ensure_ascii=False)
     
     print(f"[OK] Generated: {home_folder}")
-    print(f"  Contains {len(home_acts)} model switch buttons")
+    print(f"  包含 {total_models} 个模型，分布在 {total_pages} 页中")
     return home_folder
 
 def copy_to_official_directory():

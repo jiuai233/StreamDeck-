@@ -1,2 +1,0 @@
-websockets
-psutil>=10.0

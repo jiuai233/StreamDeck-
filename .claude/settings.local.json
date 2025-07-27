@@ -3,7 +3,12 @@
     "allow": [
       "Bash(python:*)",
       "Bash(del test_icon_copy.py test_icon_copy_standalone.py update_json_icons.py)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(\".\\StreamDeck-VTS-Generator.exe\" --help)",
+      "Bash(ls:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(taskkill:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }

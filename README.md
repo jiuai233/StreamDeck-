@@ -10,7 +10,4 @@ VTubeStudio StreamDeck 快捷键配置生成器
 
 ## 依赖安装
 
-```bash
-pip install -r requirements.txt
-```
 

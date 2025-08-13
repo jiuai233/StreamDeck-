@@ -8,6 +8,6 @@ VTubeStudio StreamDeck 快捷键配置生成器
 2. StreamDeck 面板需设置为 `293v3_310e`
 3. 运行 `python main.py` 生成配置
 
-## 依赖安装
+
 
 
